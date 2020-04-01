@@ -61,18 +61,143 @@
 
 #include "LAGraph_internal.h"
 
-#define LAGRAPH_FREE_ALL    \
-{                           \
-    GrB_free (&v) ;         \
+
+// it is empty because all functions can call it but only main has real ones
+#define LAGRAPH_FREE_ALL
+
+
+GrB_Info build_identity_matrix(GrB_Matrix *identity, GrB_Index size) {
+    LAGr_Matrix_new(identity, GrB_INT32, size, size);
+    LAGr_assign (*identity, NULL, NULL, 0, GrB_ALL, size, GrB_ALL, size, NULL);
+    for (int i = 0; i < size; i++) {
+        LAGr_Matrix_setElement(*identity, 1, i, i);
+    }
 }
 
 
-GrB_Info build_permutation_matrix(GrB_Matrix *perm_matrix, int *children_amount, const GrB_Vector *children_pos, GrB_Index tay, GrB_Index beta) {
+GrB_Info build_permutation_matrix(
+        GrB_Matrix *perm_matrix,
+        int32_t *children_amount,
+        const GrB_Vector children_pos,
+        GrB_Index tay,
+        GrB_Index beta,
+        GrB_Index size
+) {
     // as we don't have ability to compute children_pos * children_pos.transpose()
     // we will use reduce with plus to calculate amount of not zero values
-    GrB_Vector v = NULL;
+    LAGr_reduce(children_amount, GrB_NULL, GxB_PLUS_INT32_MONOID, children_pos, GrB_NULL);
+    GrB_Matrix step_1_matrix = NULL;
+    build_identity_matrix(&step_1_matrix, size);
+    GrB_Index tmp_beta = beta;
 
-    LAGr_reduce(&children_amount, GrB_NULL, GxB_PLUS_INT64_MONOID, *children_pos, GrB_NULL);
+    // step 1
+    for (GrB_Index i = 0; i < size; i++) {
+        int32_t elem;
+        LAGr_Vector_extractElement(&elem, children_pos, i)
+        if (elem == 1) {
+            // create tmp vector with all zeroes
+            GrB_Vector tmp = NULL;
+            LAGr_Vector_new (&tmp, GrB_INT32, size);
+
+            // extract the column corresponding to ith position
+            LAGr_extract(tmp, GrB_NULL, GrB_NULL, step_1_matrix, GrB_ALL, size, i, GrB_NULL)
+
+            // create tmp matrix
+            GrB_Matrix tmp_matrix = NULL;
+            GrB_Index tmp_matrix_ncols = i - tmp_beta;
+            LAGr_Matrix_new(&tmp_matrix, GrB_INT32, size, tmp_matrix_ncols);
+
+            // create indexes of columns which will be shifted
+            GrB_Index * col_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_ncols);
+            for (int j = 0; j < tmp_matrix_ncols; j++) {
+                col_indexes[j] = tmp_beta + j;
+            }
+
+            // extract all columns from tmp_beta column to ith column for shifting columns
+            LAGr_extract (tmp_matrix, NULL, NULL, step_1_matrix, GrB_ALL, size, col_indexes, tmp_matrix_ncols, GrB_NULL);
+
+            // shift columns in matrix
+            for (int j = 0; j < tmp_matrix_ncols; j++) {
+                col_indexes[j]++;
+            }
+            LAGr_assign(step_1_matrix, GrB_NULL, GrB_NULL, tmp_matrix, GrB_ALL, size, col_indexes, tmp_matrix_ncols, GrB_NULL);
+
+            // put the column corresponding to ith position
+            LAGr_assign(step_1_matrix, GrB_NULL, GrB_NULL, tmp, GrB_ALL, size, tmp_beta, GrB_NULL);
+
+            // increment stack counter as we now work with s_u without this node
+            tmp_beta++;
+
+            // free after iter
+            free(col_indexes);
+            GrB_free(&tmp);
+            GrB_free(&tmp_matrix);
+        }
+    }
+
+
+    // step 2
+    GrB_Matrix step_2_matrix = NULL;
+    build_identity_matrix(&step_2_matrix, size);
+
+    // create tmp_matrix_1 for copying columns which have to be moved to top of s_p
+    GrB_Matrix tmp_matrix_1 = NULL;
+    GrB_Index tmp_matrix_1_ncols = tmp_beta - beta;
+    LAGr_Matrix_new(&tmp_matrix_1, GrB_INT32, size, tmp_matrix_1_ncols);
+
+    // create indexes of columns which have to be moved to top of s_p
+    GrB_Index * col_moved_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_1_ncols);
+    for (int j = 0; j < tmp_matrix_1_ncols; j++) {
+        col_moved_indexes[j] = beta + j;
+    }
+
+    // extract all columns which have to be moved to top of s_p
+    LAGr_extract (tmp_matrix_1, NULL, NULL, step_2_matrix, GrB_ALL, size, col_moved_indexes, tmp_matrix_1_ncols, GrB_NULL);
+
+    // create tmp matrix for shifting other columns
+    GrB_Matrix tmp_matrix_2 = NULL;
+    GrB_Index tmp_matrix_2_ncols = beta - tay;
+    LAGr_Matrix_new(&tmp_matrix_2, GrB_INT32, size, tmp_matrix_2_ncols);
+
+    // create indexes of columns which will be shifted
+    GrB_Index * col_shift_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_2_ncols);
+    for (int j = 0; j < tmp_matrix_2_ncols; j++) {
+        col_shift_indexes[j] = tay + j;
+    }
+
+    // extract all columns from tay column to beta column for shifting columns
+    LAGr_extract (tmp_matrix_2, NULL, NULL, step_2_matrix, GrB_ALL, size, col_shift_indexes, tmp_matrix_2_ncols, GrB_NULL);
+
+    // shift columns in matrix
+    for (int j = 0; j < tmp_matrix_2_ncols; j++) {
+        col_shift_indexes[j] += tmp_matrix_1_ncols;
+    }
+    LAGr_assign(step_2_matrix, GrB_NULL, GrB_NULL, tmp_matrix_2, GrB_ALL, size, col_shift_indexes, tmp_matrix_2_ncols, GrB_NULL);
+
+    // put the columns which have to be moved to top of s_p to the top of s_p
+    for (int j = 0; j < tmp_matrix_1_ncols; j++) {
+        col_moved_indexes[j] = tay + j;
+    }
+    LAGr_assign(step_2_matrix, GrB_NULL, GrB_NULL, tmp_matrix_1, GrB_ALL, size, col_moved_indexes, tmp_matrix_1_ncols, GrB_NULL);
+
+    // summarize permutations by matrix multiplication
+    LAGr_Matrix_new(perm_matrix, GrB_INT32, size, size);
+    LAGr_mxm(*perm_matrix, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, step_1_matrix, step_2_matrix, GrB_NULL);
+
+    // free
+    free(col_moved_indexes);
+    free(col_shift_indexes);
+    LAGr_free(&tmp_matrix_1);
+    LAGr_free(&tmp_matrix_2);
+    LAGr_free(&step_1_matrix);
+    LAGr_free(&step_2_matrix);
+}
+
+
+GrB_Info get_vector_e(GrB_Vector *res, GrB_Index size, GrB_Index position) {
+    LAGr_Vector_new (res, GrB_INT32, size);
+    LAGr_assign (*res, NULL, NULL, 0, GrB_ALL, size, NULL);
+    LAGr_Vector_setElement (*res, 1, position);
 }
 
 GrB_Info LAGraph_dfs_traverse_bin_tree     // traversal of the binary tree in pre-order DFS
@@ -94,42 +219,58 @@ GrB_Info LAGraph_dfs_traverse_bin_tree     // traversal of the binary tree in pr
 
     // create an empty vector v, and make it dense
     GrB_Index n;
-    GrB_BinaryOp empty_oper = NULL;
     LAGr_Matrix_nrows(&n, A);
-    LAGr_Vector_new (&v, GrB_INT64, n);
+    LAGr_Vector_new (&v, GrB_INT32, n);
     for (GrB_Index i = 0; i < n; i++) {
         LAGr_Vector_setElement(v, i, i);
     }
 
-    int children_amount;
+    int32_t children_amount;
     GrB_Index tay = 0, beta = 0;
     GrB_Matrix permutation_matrix = NULL;
-    // create matrix with shape like A.shape
 
-    build_permutation_matrix(&permutation_matrix, &children_amount, &v, tay, beta);
-    printf("CGHHHH: %d\n", children_amount);
+    // descriptor for transposing left matrix in multiplication
+    GrB_Descriptor left_transpose_descr = NULL;
+    LAGr_Descriptor_new(&left_transpose_descr);
+    LAGr_Descriptor_set(left_transpose_descr, GrB_INP0, GrB_TRAN);
 
+    // push and pop root
+    GrB_Vector children = NULL;
+    get_vector_e(&children, n, source);
+    build_permutation_matrix(&permutation_matrix, &children_amount, children, tay, beta, n);
 
-    // create a boolean vector q, and set q(source) to true
-//    LAGr_Vector_new (&q, GrB_BOOL, n) ;
-//    LAGr_Vector_setElement (q, true, source) ;
+    LAGr_mxv(v, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, permutation_matrix, v, left_transpose_descr);
+    LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, permutation_matrix, A, left_transpose_descr);
+    LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, A, permutation_matrix, GrB_NULL);
 
-    //--------------------------------------------------------------------------
-    // BFS traversal and label the nodes
-    //--------------------------------------------------------------------------
+    beta += children_amount;
 
-//    for (int64_t level = 1 ; level <= n ; level++)
-//    {
-//        // v<q> = level
-//        LAGr_assign (v, q, NULL, level, GrB_ALL, n, desc_s) ;
-//
-//        // break if q is empty
-//        LAGr_Vector_nvals (&nvals, q) ;
-//        if (nvals == 0) break ;
-//
-//        // q'<!v> = q'*A
-//        LAGr_vxm (q, v, NULL, semiring, q, A, desc_rc) ;
-//    }
+    // free before loop
+    GrB_free(&children);
+    GrB_free(&permutation_matrix);
+
+    while (tay < n) {
+        // get children
+        get_vector_e(&children, n, tay);
+        LAGr_mxv(children, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, A, children, left_transpose_descr);
+
+        // pop
+        tay++;
+        if (beta < tay) {
+            beta++;
+        }
+
+        // push
+        build_permutation_matrix(&permutation_matrix, &children_amount, children, tay, beta, n);
+        LAGr_mxv(v, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, permutation_matrix, v, left_transpose_descr);
+        LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, permutation_matrix, A, left_transpose_descr);
+        LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, A, permutation_matrix, GrB_NULL);
+        beta += children_amount;
+
+        // free before next iteration
+        GrB_free(&children);
+        GrB_free(&permutation_matrix);
+    }
 
     //--------------------------------------------------------------------------
     // free workspace and return result
@@ -137,7 +278,7 @@ GrB_Info LAGraph_dfs_traverse_bin_tree     // traversal of the binary tree in pr
 
     (*v_output) = v;       // return result
     v = NULL;              // set to NULL so LAGRAPH_FREE_ALL doesn't free it
-    LAGRAPH_FREE_ALL;      // free all workspace (except for result v)
+    GrB_free (&left_transpose_descr);
     return (GrB_SUCCESS);
 }
 
