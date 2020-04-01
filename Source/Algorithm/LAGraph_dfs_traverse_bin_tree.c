@@ -74,6 +74,32 @@ GrB_Info build_identity_matrix(GrB_Matrix *identity, GrB_Index size) {
     }
 }
 
+GrB_Info shift_cols_in_matrix(GrB_Matrix matrix, GrB_Index start, GrB_Index end, GrB_Index shift_step, GrB_Index size) {
+    // create tmp matrix
+    GrB_Matrix tmp_matrix = NULL;
+    GrB_Index tmp_matrix_ncols = end - start;
+    LAGr_Matrix_new(&tmp_matrix, GrB_INT32, size, tmp_matrix_ncols);
+
+    // create indexes of columns which will be shifted
+    GrB_Index * col_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_ncols);
+    for (int j = 0; j < tmp_matrix_ncols; j++) {
+        col_indexes[j] = start + j;
+    }
+
+    // extract all columns from tmp_beta column to ith column for shifting columns
+    LAGr_extract (tmp_matrix, NULL, NULL, matrix, GrB_ALL, size, col_indexes, tmp_matrix_ncols, GrB_NULL);
+
+    // shift columns in matrix
+    for (int j = 0; j < tmp_matrix_ncols; j++) {
+        col_indexes[j] += shift_step;
+    }
+    LAGr_assign(matrix, GrB_NULL, GrB_NULL, tmp_matrix, GrB_ALL, size, col_indexes, tmp_matrix_ncols, GrB_NULL);
+
+    // free
+    free(col_indexes);
+    GrB_free(&tmp_matrix);
+}
+
 
 GrB_Info build_permutation_matrix(
         GrB_Matrix *perm_matrix,
@@ -102,25 +128,8 @@ GrB_Info build_permutation_matrix(
             // extract the column corresponding to ith position
             LAGr_extract(tmp, GrB_NULL, GrB_NULL, step_1_matrix, GrB_ALL, size, i, GrB_NULL)
 
-            // create tmp matrix
-            GrB_Matrix tmp_matrix = NULL;
-            GrB_Index tmp_matrix_ncols = i - tmp_beta;
-            LAGr_Matrix_new(&tmp_matrix, GrB_INT32, size, tmp_matrix_ncols);
-
-            // create indexes of columns which will be shifted
-            GrB_Index * col_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_ncols);
-            for (int j = 0; j < tmp_matrix_ncols; j++) {
-                col_indexes[j] = tmp_beta + j;
-            }
-
-            // extract all columns from tmp_beta column to ith column for shifting columns
-            LAGr_extract (tmp_matrix, NULL, NULL, step_1_matrix, GrB_ALL, size, col_indexes, tmp_matrix_ncols, GrB_NULL);
-
             // shift columns in matrix
-            for (int j = 0; j < tmp_matrix_ncols; j++) {
-                col_indexes[j]++;
-            }
-            LAGr_assign(step_1_matrix, GrB_NULL, GrB_NULL, tmp_matrix, GrB_ALL, size, col_indexes, tmp_matrix_ncols, GrB_NULL);
+            shift_cols_in_matrix(step_1_matrix, tmp_beta, i, 1, size);
 
             // put the column corresponding to ith position
             LAGr_assign(step_1_matrix, GrB_NULL, GrB_NULL, tmp, GrB_ALL, size, tmp_beta, GrB_NULL);
@@ -129,9 +138,7 @@ GrB_Info build_permutation_matrix(
             tmp_beta++;
 
             // free after iter
-            free(col_indexes);
             GrB_free(&tmp);
-            GrB_free(&tmp_matrix);
         }
     }
 
@@ -154,25 +161,8 @@ GrB_Info build_permutation_matrix(
     // extract all columns which have to be moved to top of s_p
     LAGr_extract (tmp_matrix_1, NULL, NULL, step_2_matrix, GrB_ALL, size, col_moved_indexes, tmp_matrix_1_ncols, GrB_NULL);
 
-    // create tmp matrix for shifting other columns
-    GrB_Matrix tmp_matrix_2 = NULL;
-    GrB_Index tmp_matrix_2_ncols = beta - tay;
-    LAGr_Matrix_new(&tmp_matrix_2, GrB_INT32, size, tmp_matrix_2_ncols);
-
-    // create indexes of columns which will be shifted
-    GrB_Index * col_shift_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_2_ncols);
-    for (int j = 0; j < tmp_matrix_2_ncols; j++) {
-        col_shift_indexes[j] = tay + j;
-    }
-
-    // extract all columns from tay column to beta column for shifting columns
-    LAGr_extract (tmp_matrix_2, NULL, NULL, step_2_matrix, GrB_ALL, size, col_shift_indexes, tmp_matrix_2_ncols, GrB_NULL);
-
     // shift columns in matrix
-    for (int j = 0; j < tmp_matrix_2_ncols; j++) {
-        col_shift_indexes[j] += tmp_matrix_1_ncols;
-    }
-    LAGr_assign(step_2_matrix, GrB_NULL, GrB_NULL, tmp_matrix_2, GrB_ALL, size, col_shift_indexes, tmp_matrix_2_ncols, GrB_NULL);
+    shift_cols_in_matrix(step_2_matrix, tay, beta, tmp_matrix_1_ncols, size);
 
     // put the columns which have to be moved to top of s_p to the top of s_p
     for (int j = 0; j < tmp_matrix_1_ncols; j++) {
@@ -186,9 +176,7 @@ GrB_Info build_permutation_matrix(
 
     // free
     free(col_moved_indexes);
-    free(col_shift_indexes);
     LAGr_free(&tmp_matrix_1);
-    LAGr_free(&tmp_matrix_2);
     LAGr_free(&step_1_matrix);
     LAGr_free(&step_2_matrix);
 }
