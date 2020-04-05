@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// dfs_topsort_test: read in (or create) a matrix and test DFS topological sorting
+// dfs_topsort_test: read in (or create) a matrix and test DFS-based topological sort
 //------------------------------------------------------------------------------
 
 /*
@@ -34,9 +34,9 @@
 
 //------------------------------------------------------------------------------
 
-// Contributed by Vladislav Myasnikov, SPbU
+// Contributed by Vladislav Myasnikov, SPbU, Saint Petersburg, Russia
 
-// Put comments here
+//------------------------------------------------------------------------------
 
 #include "LAGraph.h"
 
@@ -81,7 +81,7 @@ int main(int argc, char **argv)
     LAGraph_dfs_topsort(&result, A, 3);
 
     int k;
-    printf("Result: ");
+    printf("Topologically sorted array of vertices:\n");
     for (GrB_Index i = 0; i < n; i++) {
         GrB_Vector_extractElement(&k, result, i);
         printf("%d ", k + 1);

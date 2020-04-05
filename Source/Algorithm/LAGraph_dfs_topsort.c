@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// LAGraph_dfs_topsort: Topological sorting
+// LAGraph_dfs_topsort: DFS-based topological sort
 //------------------------------------------------------------------------------
 
 /*
@@ -34,7 +34,35 @@
 
 //------------------------------------------------------------------------------
 
-/* Put comments here */
+// LAGraph_dfs_topsort: DFS-based topological sort, returning ordered
+// vector of vertices.
+// Contributed by Vladislav Myasnikov, SPbU, Saint Petersburg, Russia
+
+// In this algorithm vertices are classified into three different statuses:
+//   1. Unordered. The order in which they are visited have not been determined.
+// All vertices are assigned the unordered status at the start of the algorithm.
+//   2. Partially ordered. An initial visit order for the vertex has been assigned,
+// but this order may be changed later. A partially ordered vertex may be visited
+// multiple times.
+//   3. Ordered. The order in which vertex is processed is fixed. This status is
+// assigned to a vertex when the vertex will not be visited again in the future.
+
+// Vector s keeps track of the statuses of all vertices: dim(s) = N = |V|
+// Each element of s is the unique label (0..N-1) associated with specific vertex.
+// Vector s is partitioned into three sub-vectors as follows:
+//
+//                             |s_s| - ordered
+//                      s ---> |s_p| - partially ordered
+//                             |s_u| - unordered
+//
+// tau and beta variables are tops of s_p and s_u respectively
+
+// LAGraph_dfs_topsort performs a single-source DFS, starting at a source node and
+// terminating when all vertices are ordered. This algorithm use matrix and vector
+// permutations via pre- and post-multiplying the matrices and vectors with
+// a permutation matrix.
+
+// For more information, see https://doi.org/10.1145/3315454.3329962
 
 //------------------------------------------------------------------------------
 
@@ -42,37 +70,47 @@
 
 #define LAGRAPH_FREE_ALL
 
-void shift_cols_in_matrix(GrB_Matrix M, GrB_Index start, GrB_Index end, GrB_Index shift_step, GrB_Index dim)
+/* Shift specific matrix columns */
+GrB_Info shift_columns(
+    GrB_Matrix M,           // source matrix
+    GrB_Index start,        // index of 1st column to be shifted
+    GrB_Index end,          // index of last column to be shifted
+    GrB_Index shift_step,   // shift value
+    GrB_Index dim           // dimension of columns
+)
 {
-    // Create matrix TMP[dim x (end - start)]
-    GrB_Matrix TMP = GrB_NULL;
-    GrB_Index column_amount = end - start;
-    LAGr_Matrix_new(&TMP, GrB_UINT64, dim, column_amount);
+    if (start <= end && start >= 0 && end >= 0) {
+        // TMP := Matrix[dim x (end - start + 1)]
+        GrB_Matrix TMP = GrB_NULL;
+        GrB_Index column_amount = end - start + 1;
+        LAGr_Matrix_new(&TMP, GrB_UINT64, dim, column_amount);
 
-    // create indexes of columns which will be shifted
-    GrB_Index* col_indexes = malloc(sizeof(GrB_Index) * column_amount);
-    for (int j = 0; j < column_amount; j++)
-        col_indexes[j] = start + j;
+        // create indices of columns to be shifted
+        GrB_Index* indices = malloc(sizeof(GrB_Index) * column_amount);
+        for (int j = 0; j < column_amount; j++)
+            indices[j] = start + j;
 
-    // extract all columns from tmp_beta column to ith column for shifting columns
-    LAGr_extract(TMP, NULL, NULL, M, GrB_ALL, dim, col_indexes, column_amount, GrB_NULL);
+        // TMP := Submatrix(M, i = 0..dim-1, j = start..end)
+        LAGr_extract(TMP, NULL, NULL, M, GrB_ALL, dim, indices, column_amount, GrB_NULL);
 
-    // shift columns in matrix
-    for (int j = 0; j < column_amount; j++)
-        col_indexes[j] += shift_step;
+        // shift column indices
+        for (int j = 0; j < column_amount; j++)
+            indices[j] += shift_step;
 
-    LAGr_assign(M, GrB_NULL, GrB_NULL, TMP, GrB_ALL, dim, col_indexes, column_amount, GrB_NULL);
+        // put specific matrix columns in a new place
+        LAGr_assign(M, GrB_NULL, GrB_NULL, TMP, GrB_ALL, dim, indices, column_amount, GrB_NULL);
 
-    // Cleanup
-    // *death* <--- col_indexes, TMP
-    free(col_indexes);
-    GrB_free(&TMP);
+        // cleanup
+        GrB_free(&TMP);
+        free(indices);
+    }
 }
 
-/*
- * Create identity matrix P[dim x dim]
- */
-void build_id_permute(GrB_Matrix* P, GrB_Index dim)
+/* Create identity matrix P[dim x dim] */
+GrB_Info build_id_permute(
+    GrB_Matrix* P,   // permutation matrix to be created (1s are only on the main diagonal)
+    GrB_Index dim    // dimension of permutation matrix
+)
 {
     LAGr_Matrix_new(P, GrB_UINT64, dim, dim);
     LAGr_assign(*P, GrB_NULL, GrB_NULL, 0, GrB_ALL, dim, GrB_ALL, dim, GrB_NULL);
@@ -80,16 +118,19 @@ void build_id_permute(GrB_Matrix* P, GrB_Index dim)
         LAGr_Matrix_setElement(*P, 1, i, i);
 }
 
-/*
- * Create permutation matrix P[dim x dim]
- * n: boolean vector where 1 indicate child of current node
- * v: amount of nodes moved from s_u to s_p
- */
-void build_permute(GrB_Matrix *P, GrB_Index *v, GrB_Vector n, GrB_Index dim, GrB_Index tau, GrB_Index beta)
+/* Create permutation matrix P[dim x dim] */
+GrB_Info build_permute(
+    GrB_Matrix *P,   // permutation matrix to be created
+    GrB_Index *v,    // amount of vertices to be moved from s_u to s_p
+    GrB_Vector n,    // boolean vector (1s indicate current considered vertices)
+    GrB_Index dim,   // dimension of permutation matrix
+    GrB_Index tau,   // top of s_p
+    GrB_Index beta   // top of s_u
+)
 {
     //------------------------------------------------------------------------------
     // Matrix P1 creation
-    // Moving from s_p to top of s_p
+    // Moving all considered vertices belonging to s_p to the top of s_p
     //------------------------------------------------------------------------------
 
     GrB_Matrix P1 = GrB_NULL;
@@ -106,23 +147,23 @@ void build_permute(GrB_Matrix *P, GrB_Index *v, GrB_Vector n, GrB_Index dim, GrB
             GrB_Vector tmp = GrB_NULL;
             LAGr_Vector_new(&tmp, GrB_UINT64, dim);
 
-            // tmp <--- i-th column of P1
+            // tmp := i-th column of P1
             LAGr_extract(tmp, GrB_NULL, GrB_NULL, P1, GrB_ALL, dim, i, GrB_NULL);
 
             // shift columns in P1
-            shift_cols_in_matrix(P1, tau, i, 1, dim);
+            shift_columns(P1, tau, i - 1, 1, dim);
 
-            // tmp_beta-th column of P1 <--- tmp
+            // tmp_beta-th column of P1 := tmp
             LAGr_assign(P1, GrB_NULL, GrB_NULL, tmp, GrB_ALL, dim, tau, GrB_NULL);
 
-            // *death* <--- tmp
+            // cleanup
             GrB_free(&tmp);
         }
     }
 
     //------------------------------------------------------------------------------
     // Matrix P2 creation
-    // Moving from s_u to bottom of s_p
+    // Moving all considered vertices belonging to s_u to the bottom of s_p
     //------------------------------------------------------------------------------
 
     GrB_Matrix P2 = GrB_NULL;
@@ -141,103 +182,92 @@ void build_permute(GrB_Matrix *P, GrB_Index *v, GrB_Vector n, GrB_Index dim, GrB
             GrB_Vector tmp = GrB_NULL;
             LAGr_Vector_new(&tmp, GrB_UINT64, dim);
 
-            // tmp <--- i-th column of P2
+            // tmp := i-th column of P2
             LAGr_extract(tmp, GrB_NULL, GrB_NULL, P2, GrB_ALL, dim, i, GrB_NULL);
 
             // shift columns in P2
-            shift_cols_in_matrix(P2, tmp_beta, i, 1, dim);
+            shift_columns(P2, tmp_beta, i - 1, 1, dim);
 
-            // tmp_beta-th column of P2 <--- tmp
+            // tmp_beta-th column of P2 := tmp
             LAGr_assign(P2, GrB_NULL, GrB_NULL, tmp, GrB_ALL, dim, tmp_beta, GrB_NULL);
 
-            // increment stack counter as we now work with s_u without this node
+            // move the temporary border between s_p and s_u
             tmp_beta++;
 
+            // increment amount of vertices to be moved from s_u to s_p
             (*v)++;
 
-            // *death* <--- tmp
+            // cleanup
             GrB_free(&tmp);
         }
     }
 
     //------------------------------------------------------------------------------
     // Matrix P3 creation
-    // Moving from bottom of s_p to top of s_p
+    // Moving all shifted vertices in the previous step to the top of s_p
     //------------------------------------------------------------------------------
 
     GrB_Matrix P3 = GrB_NULL;
     build_id_permute(&P3, dim);
 
-    // create TMP for copying columns which have to be moved to top of s_p
+    // TMP := Matrix[dim x (tmp_beta - beta)]
     GrB_Matrix TMP = GrB_NULL;
     GrB_Index column_amount = tmp_beta - beta;
     LAGr_Matrix_new(&TMP, GrB_UINT64, dim, column_amount);
 
-    // create indexes of columns which have to be moved to top of s_p
-    GrB_Index* col_moved_indexes = malloc(sizeof(GrB_Index) * column_amount);
+    // create indices of columns to be moved to the top of s_p
+    GrB_Index* indices = malloc(sizeof(GrB_Index) * column_amount);
     for (int j = 0; j < column_amount; j++)
-        col_moved_indexes[j] = beta + j;
+        indices[j] = beta + j;
 
-    // extract all columns which have to be moved to top of s_p
-    LAGr_extract(TMP, GrB_NULL, GrB_NULL, P3, GrB_ALL, dim, col_moved_indexes, column_amount, GrB_NULL);
+    // TMP := Submatrix(M, i = 0..dim-1, j = beta..tmp_beta-1)
+    LAGr_extract(TMP, GrB_NULL, GrB_NULL, P3, GrB_ALL, dim, indices, column_amount, GrB_NULL);
 
-    // shift columns in matrix
-    shift_cols_in_matrix(P3, tau, beta, column_amount, dim);
+    // shift columns in P3
+    shift_columns(P3, tau, beta - 1, column_amount, dim);
 
-    // put the columns which have to be moved to top of s_p to the top of s_p
+    // shift column indices
     for (int j = 0; j < column_amount; j++)
-        col_moved_indexes[j] = tau + j;
+        indices[j] = tau + j;
 
-    LAGr_assign(P3, GrB_NULL, GrB_NULL, TMP, GrB_ALL, dim, col_moved_indexes, column_amount, GrB_NULL);
+    // put specific columns of P3 in a new place
+    LAGr_assign(P3, GrB_NULL, GrB_NULL, TMP, GrB_ALL, dim, indices, column_amount, GrB_NULL);
 
     //------------------------------------------------------------------------------
-    // Matrix P creation
-    // P <--- P1 * P2 * P3
+    // Matrix P creation and cleanup
     //------------------------------------------------------------------------------
 
+    // P := P1 * P2 * P3
     LAGr_Matrix_new(P, GrB_UINT64, dim, dim);
     LAGr_mxm(*P, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, P1, P2, GrB_NULL);
     LAGr_mxm(*P, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, *P, P3, GrB_NULL);
 
-    //------------------------------------------------------------------------------
-    // Cleanup
-    // *death* <--- P1, P2, P3, TMP, col_moved_indexes
-    //------------------------------------------------------------------------------
-
+    // cleanup
     LAGr_free(&P1);
     LAGr_free(&P2);
     LAGr_free(&P3);
     LAGr_free(&TMP);
-    free(col_moved_indexes);
+    free(indices);
 }
 
-void get_vector_e(GrB_Vector *res, GrB_Index size, GrB_Index position)
+/* Create a vector with a single unit and the remaining zeros */
+GrB_Info build_vector_with_single_unit(
+    GrB_Vector *v,       // vector to be created
+    GrB_Index dim,       // dimension of vector
+    GrB_Index position   // position of a unit
+)
 {
-    LAGr_Vector_new(res, GrB_UINT64, size);
-    LAGr_assign(*res, NULL, NULL, 0, GrB_ALL, size, NULL);
-    LAGr_Vector_setElement(*res, 1, position);
+    LAGr_Vector_new(v, GrB_UINT64, dim);
+    LAGr_assign(*v, NULL, NULL, 0, GrB_ALL, dim, NULL);
+    LAGr_Vector_setElement(*v, 1, position);
 }
 
-// temporary function
-void print_vector(GrB_Vector s, GrB_Index dim, GrB_Index tau, GrB_Index beta)
-{
-    for (int i = 0; i < dim; i++)
-    {
-        u_int64_t x;
-        LAGr_Vector_extractElement(&x, s, i);
-        if (i == tau || i == beta) printf("|");
-        else printf(" ");
-        printf("%ld", x + 1);
-    }
-    printf("\n");
-}
-
-/* Put comments here */
+/* DFS-based topological sort */
 GrB_Info LAGraph_dfs_topsort
 (
-    GrB_Vector *order_output,
-    GrB_Matrix A,
-    GrB_Index source
+    GrB_Vector *order_output,   // topological order of vertices
+    GrB_Matrix A,               // input graph, treated as if boolean in semiring
+    GrB_Index source            // starting vertex of the DFS
 )
 {
     //--------------------------------------------------------------------------
@@ -245,28 +275,26 @@ GrB_Info LAGraph_dfs_topsort
     //--------------------------------------------------------------------------
 
     GrB_Info info;
-    GrB_Index nrows, ncols;
-    GrB_Vector s = GrB_NULL;
 
     if (A == GrB_NULL || order_output == GrB_NULL)
     {
-        // required argument is missing
         LAGRAPH_ERROR ("required arguments are NULL", GrB_NULL_POINTER);
     }
 
-    *order_output = GrB_NULL;
+    GrB_Index nrows, ncols;
     LAGRAPH_OK (GrB_Matrix_nrows (&nrows, A));
     LAGRAPH_OK (GrB_Matrix_ncols (&ncols, A));
+
     if (nrows != ncols)
     {
-        // A must be square
         LAGRAPH_ERROR ("A must be square", GrB_INVALID_VALUE);
     }
+
     GrB_Index n = nrows;
 
     if (source >= n || source < 0)
     {
-        LAGRAPH_ERROR ("invalid value for source vertex s", GrB_INVALID_VALUE) ;
+        LAGRAPH_ERROR ("invalid value for source vertex", GrB_INVALID_VALUE) ;
     }
 
     //--------------------------------------------------------------------------
@@ -276,71 +304,80 @@ GrB_Info LAGraph_dfs_topsort
     GrB_Index tau = 0;
     GrB_Index beta = 0;
     GrB_Index child_amount = 0;
+    GrB_Matrix P = GrB_NULL;
+    *order_output = GrB_NULL;
 
+    // s := (0,1,2..,n-1)
+    GrB_Vector s = GrB_NULL;
     LAGRAPH_OK (GrB_Vector_new(&s, GrB_UINT64, n));
     for (GrB_Index i = 0; i < n; i++)
         LAGRAPH_OK (GrB_Vector_setElement_UINT64(s, i, i));
 
+    // children := (0,..,0)
     GrB_Vector children = GrB_NULL;
     LAGRAPH_OK (GrB_Vector_new(&children, GrB_UINT64, n));
 
-    GrB_Matrix P = GrB_NULL;
-
-    // descriptor for transposing matrix in multiplication
+    // create descriptor for transposing matrix in multiplication
     GrB_Descriptor tr_desc = GrB_NULL;
     LAGr_Descriptor_new(&tr_desc);
     LAGr_Descriptor_set(tr_desc, GrB_INP0, GrB_TRAN);
 
     //--------------------------------------------------------------------------
-    // DFS traversal and topological sorting the nodes
+    // DFS-based topological sort - 1st step
     //--------------------------------------------------------------------------
-    // 1st step
-    // Root processing...
+    // Placing the source vertex at the top of s_p by using a vector permutation
+    // and moving the bottom line.
     //--------------------------------------------------------------------------
 
-    get_vector_e(&children, n, source);
+    // children := (0,..,0,1,0,..,0), where 1 is in source-th position
+    build_vector_with_single_unit(&children, n, source);
 
-    // child_amount, P <--- *build_permute* <--- children, tau, beta
+    // get permutation matrix and amount of vertices moved from s_u to s_p
     build_permute(&P, &child_amount, children, n, tau, beta);
 
-    // A <--- TRANSPOSE(P) * A * P
+    // A := TRANSPOSE(P) * A * P
     LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, P, A, tr_desc);
     LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, A, P, GrB_NULL);
 
-    // s <--- TRANSPOSE(P) * s
+    // s := TRANSPOSE(P) * s
     LAGr_mxv(s, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, P, s, tr_desc);
 
     // move the border between s_p and s_u
     beta += child_amount;
 
-    // *death* <--- children, P
+    // cleanup
     GrB_free(&children);
     GrB_free(&P);
 
-//    print_vector(s, n, tau, beta);
-
     //--------------------------------------------------------------------------
-    // DFS traversal and topological sorting the nodes
+    // DFS-based topological sort - 2nd step
     //--------------------------------------------------------------------------
-    // 2nd step
-    // Loop...
+    // Until all the vertices are in the s_s:
+    // 1. Visiting the top vertex of s_p.
+    // 2. Pushing children of this vertex from s_u and s_p at the top of s_p.
+    //    This operation is performed via permutation as in 1st step above.
+    // 3. Popping the top vertex of s_p. This means moving forward the top line,
+    //    which in the first iteration is the source, and adding the vertex to s_s.
+    //    This operation is performed only when child_amount = 0, i.e.,
+    //    it's a stock vertex or all of its children are already in s_s.
     //--------------------------------------------------------------------------
 
     while (tau < n)
     {
-        get_vector_e(&children, n, tau);
+        // children := (0,..,0,1,0,..,0), where 1 is in tau-th position
+        build_vector_with_single_unit(&children, n, tau);
 
-        // children <--- TRANSPOSE(A) * children
+        // children := TRANSPOSE(A) * children
         LAGr_mxv(children, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, A, children, tr_desc);
 
-        // children, P <--- *build_permute* <--- children, tau, beta
+        // get permutation matrix and amount of vertices moved from s_u to s_p
         build_permute(&P, &child_amount, children, n, tau, beta);
 
-        // A <--- TRANSPOSE(P) * A * P
+        // A := TRANSPOSE(P) * A * P
         LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, P, A, tr_desc);
         LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, A, P, GrB_NULL);
 
-        // s <--- TRANSPOSE(P) * s
+        // s := TRANSPOSE(P) * s
         LAGr_mxv(s, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_UINT64, P, s, tr_desc);
 
         // move the border between s_p and s_u
@@ -350,11 +387,9 @@ GrB_Info LAGraph_dfs_topsort
         if (child_amount == 0) tau++;
         if (beta < tau) beta++;
 
-        // *death* <--- children, P
+        // cleanup
         GrB_free(&children);
         GrB_free(&P);
-
-//        print_vector(s, n, tau, beta);
     }
 
     //--------------------------------------------------------------------------
