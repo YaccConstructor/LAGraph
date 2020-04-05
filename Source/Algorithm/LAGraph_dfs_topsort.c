@@ -86,7 +86,7 @@ GrB_Info shift_columns(
         LAGr_Matrix_new(&TMP, GrB_UINT64, dim, column_amount);
 
         // create indices of columns to be shifted
-        GrB_Index* indices = malloc(sizeof(GrB_Index) * column_amount);
+        GrB_Index indices[column_amount];
         for (int j = 0; j < column_amount; j++)
             indices[j] = start + j;
 
@@ -102,7 +102,6 @@ GrB_Info shift_columns(
 
         // cleanup
         GrB_free(&TMP);
-        free(indices);
     }
 }
 
@@ -216,7 +215,7 @@ GrB_Info build_permute(
     LAGr_Matrix_new(&TMP, GrB_UINT64, dim, column_amount);
 
     // create indices of columns to be moved to the top of s_p
-    GrB_Index* indices = malloc(sizeof(GrB_Index) * column_amount);
+    GrB_Index indices[column_amount];
     for (int j = 0; j < column_amount; j++)
         indices[j] = beta + j;
 
@@ -247,7 +246,6 @@ GrB_Info build_permute(
     LAGr_free(&P2);
     LAGr_free(&P3);
     LAGr_free(&TMP);
-    free(indices);
 }
 
 /* Create a vector with a single unit and the remaining zeros */
