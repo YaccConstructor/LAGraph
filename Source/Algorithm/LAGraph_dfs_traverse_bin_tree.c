@@ -81,7 +81,7 @@ GrB_Info shift_cols_in_matrix(GrB_Matrix matrix, GrB_Index start, GrB_Index end,
     LAGr_Matrix_new(&tmp_matrix, GrB_INT32, size, tmp_matrix_ncols);
 
     // create indexes of columns which will be shifted
-    GrB_Index * col_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_ncols);
+    GrB_Index *col_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_ncols);
     for (int j = 0; j < tmp_matrix_ncols; j++) {
         col_indexes[j] = start + j;
     }
@@ -153,13 +153,14 @@ GrB_Info build_permutation_matrix(
     LAGr_Matrix_new(&tmp_matrix_1, GrB_INT32, size, tmp_matrix_1_ncols);
 
     // create indexes of columns which have to be moved to top of s_p
-    GrB_Index * col_moved_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_1_ncols);
+    GrB_Index *col_moved_indexes = malloc(sizeof(GrB_Index) * tmp_matrix_1_ncols);
     for (int j = 0; j < tmp_matrix_1_ncols; j++) {
         col_moved_indexes[j] = beta + j;
     }
 
     // extract all columns which have to be moved to top of s_p
-    LAGr_extract (tmp_matrix_1, NULL, NULL, step_2_matrix, GrB_ALL, size, col_moved_indexes, tmp_matrix_1_ncols, GrB_NULL);
+    LAGr_extract (tmp_matrix_1, NULL, NULL, step_2_matrix, GrB_ALL, size, col_moved_indexes, tmp_matrix_1_ncols,
+                  GrB_NULL);
 
     // shift columns in matrix
     shift_cols_in_matrix(step_2_matrix, tay, beta, tmp_matrix_1_ncols, size);
@@ -168,7 +169,8 @@ GrB_Info build_permutation_matrix(
     for (int j = 0; j < tmp_matrix_1_ncols; j++) {
         col_moved_indexes[j] = tay + j;
     }
-    LAGr_assign(step_2_matrix, GrB_NULL, GrB_NULL, tmp_matrix_1, GrB_ALL, size, col_moved_indexes, tmp_matrix_1_ncols, GrB_NULL);
+    LAGr_assign(step_2_matrix, GrB_NULL, GrB_NULL, tmp_matrix_1, GrB_ALL, size, col_moved_indexes, tmp_matrix_1_ncols,
+                GrB_NULL);
 
     // summarize permutations by matrix multiplication
     LAGr_Matrix_new(perm_matrix, GrB_INT32, size, size);
@@ -192,7 +194,8 @@ GrB_Info LAGraph_dfs_traverse_bin_tree     // traversal of the binary tree in pr
         (
                 GrB_Vector *v_output,   // v(i) is the number of node in traverse order
                 GrB_Matrix A,           // input graph, treated as if boolean in semiring
-                GrB_Index source        // starting node of the DFS
+                GrB_Index source,       // starting node of the DFS
+                bool is_post_order      // post-order or pre-order of traversal
         ) {
 
     //--------------------------------------------------------------------------
@@ -222,7 +225,7 @@ GrB_Info LAGraph_dfs_traverse_bin_tree     // traversal of the binary tree in pr
     LAGr_Descriptor_new(&left_transpose_descr);
     LAGr_Descriptor_set(left_transpose_descr, GrB_INP0, GrB_TRAN);
 
-    // push and pop root
+    // push root
     GrB_Vector children = NULL;
     get_vector_e(&children, n, source);
     build_permutation_matrix(&permutation_matrix, &children_amount, children, tay, beta, n);
@@ -237,27 +240,54 @@ GrB_Info LAGraph_dfs_traverse_bin_tree     // traversal of the binary tree in pr
     GrB_free(&children);
     GrB_free(&permutation_matrix);
 
+    int32_t children_not_in_s_s_count = 0;
+
     while (tay < n) {
         // get children
         get_vector_e(&children, n, tay);
         LAGr_mxv(children, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, A, children, left_transpose_descr);
 
-        // pop
-        tay++;
-        if (beta < tay) {
-            beta++;
+        if (is_post_order) {
+            // get amount of children, which are not in s_s
+            GrB_Vector not_popped_vertices = NULL;
+            unsigned long amount_of_not_s_s = n - tay;
+            LAGr_Vector_new(&not_popped_vertices, GrB_INT32, amount_of_not_s_s);
+            // create indexes of elements which are not in s_s
+            GrB_Index *col_not_s_s_indexes = malloc(sizeof(GrB_Index) * amount_of_not_s_s);
+            for (int j = 0; j < amount_of_not_s_s; j++) {
+                col_not_s_s_indexes[j] = tay + j;
+            }
+            LAGr_extract(not_popped_vertices, GrB_NULL, GrB_NULL, children, col_not_s_s_indexes, amount_of_not_s_s,
+                        GrB_NULL);
+            LAGr_reduce(&children_not_in_s_s_count, GrB_NULL, GxB_PLUS_INT32_MONOID, not_popped_vertices, GrB_NULL);
+            GrB_free(&not_popped_vertices);
+            free(col_not_s_s_indexes);
         }
 
-        // push
-        build_permutation_matrix(&permutation_matrix, &children_amount, children, tay, beta, n);
-        LAGr_mxv(v, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, permutation_matrix, v, left_transpose_descr);
-        LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, permutation_matrix, A, left_transpose_descr);
-        LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, A, permutation_matrix, GrB_NULL);
-        beta += children_amount;
+        // when we are working with post-order traverse
+        // if we have no more children not in s_s we have to pop
+        if (children_not_in_s_s_count == 0 || !is_post_order) {
+            // pop
+            tay++;
+            if (beta < tay) {
+                beta++;
+            }
+        }
+
+        // if we have children not in s_s we have to push them
+        if (children_not_in_s_s_count != 0 || !is_post_order) {
+            // push
+            build_permutation_matrix(&permutation_matrix, &children_amount, children, tay, beta, n);
+            LAGr_mxv(v, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, permutation_matrix, v, left_transpose_descr);
+            LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, permutation_matrix, A, left_transpose_descr);
+            LAGr_mxm(A, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, A, permutation_matrix, GrB_NULL);
+            beta += children_amount;
+            // free before next iteration
+            GrB_free(&permutation_matrix);
+        }
 
         // free before next iteration
         GrB_free(&children);
-        GrB_free(&permutation_matrix);
     }
 
     //--------------------------------------------------------------------------

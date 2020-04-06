@@ -86,7 +86,7 @@ int main (int argc, char **argv)
         LAGRAPH_OK(LAGraph_mmread(&graph_matrix, stdin));
     }
 
-    LAGraph_dfs_traverse_bin_tree(&result, graph_matrix, 4);
+    LAGraph_dfs_traverse_bin_tree(&result, graph_matrix, 4, true);
 
     GrB_Index n;
     LAGr_Matrix_nrows(&n, graph_matrix);
