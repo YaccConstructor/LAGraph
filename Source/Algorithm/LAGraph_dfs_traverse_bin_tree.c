@@ -34,30 +34,18 @@
 
 //------------------------------------------------------------------------------
 
-// LAGraph_dfs_traverse_bin_tree:  TODO: WRITE IT
-//  based on the breadth-first search in the GraphBLAS C
-// API Specification by Scott McMillan, CMU.  Modified by Tim Davis, Texas A&M.
+// LAGraph_dfs_traverse_bin_tree:
+// based on the article Linear Algebraic Depth-First Search
+// by Daniele G Spampinato, Upasana Sridhar, Tzemeng Low.
+// It can be found at https://dl.acm.org/doi/abs/10.1145/3315454.3329962
+// Implemented by Dmitriy Iarosh, Saint-Petersburg State University
 
-// Perform a single-source BFS, starting at a source node.  Returns a dense
-// vector v such that v(i) > 0 if node is reachable from the source node.
-// v(source)=1 and v(i)=k if the path with the fewest edges from the source
-// node to i has k-1 edges.  If i is not reachable from the source node, then
-// v(i) is zero.
+// Perform a single-source DFS, starting at a source node, works only for binary trees.
+// Returns a dense vector v such that v(i) shows the vertice which was visited at ith step
+// according to pre-order or post-order traversal.
 
-// This method is a simple one for illustration only, and works well in
-// practice, except in the following cases:
-
-// (1) It takes Omega(n) time.  If nvals(v) << n is expected, use
-// LAGraph_bfs_pushpull instead, which is much faster if v is expected to be
-// very sparse.
-
-// (2) It assumes that vxm(q,A) is fast, and implemented in a 'push' fashion,
-// using saxpy operations instead of dot products.  This requires that the rows
-// A(i,:) are efficient to access, which is the case if A is in CSR format
-// internally in GraphBLAS (or perhaps in both CSR and CSC formats).  This
-// method will be *exceedlingly* slow if A is a MATLAB matrix in CSC format.
-
-// See LAGraph_bfs_pushpull, which handles the above two cases.
+// This method implements dfs as push-pop operations where matrix operations are used for
+// stack organising and finding children of node.
 
 #include "LAGraph_internal.h"
 
