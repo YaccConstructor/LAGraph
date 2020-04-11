@@ -230,7 +230,9 @@ GrB_Info LAGraph_dfs_traverse_bin_tree     // traversal of the binary tree in pr
 
     int32_t children_not_in_s_s_count = 0;
 
-    while (tay < n) {
+    // if tay become bigger then beta - it means stack is corrupted, so return what is ready
+    // as this happens when we start not from root and no more nodes are reachable.
+    while (tay < n && beta > tay) {
         // get children
         get_vector_e(&children, n, tay);
         LAGr_mxv(children, GrB_NULL, GrB_NULL, GxB_PLUS_TIMES_INT32, A, children, left_transpose_descr);
