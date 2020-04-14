@@ -40,22 +40,47 @@
 // dfs_test < matrixfile.mtx
 
 #include "LAGraph.h"
+#include <time.h>
 // #include <sys/time.h>
 
-#define LAGRAPH_FREE_ALL    \
-{                           \
-    GrB_free (&result);    \
-    GrB_free (&graph_matrix);         \
-}
+#define LAGRAPH_FREE_ALL
 
-/*
-double to_sec(struct timeval t1, struct timeval t2)
+
+double to_microsec(struct timespec t1, struct timespec t2)
 {
     return
-        (t2.tv_sec  - t1.tv_sec ) + 
-        (t2.tv_usec - t1.tv_usec) * 1e-6;
+        (t2.tv_sec  - t1.tv_sec ) * 1e6 +
+        (t2.tv_nsec - t1.tv_nsec) * 1e-3;
 }
-*/
+
+int find_root(GrB_Matrix matrix, GrB_Index size) {
+
+//    GrB_Descriptor desc = NULL;
+//    LAGr_Descriptor_new(&desc);
+//    LAGr_Descriptor_set(desc, GrB_INP0, GrB_TRAN);
+//    GrB_Vector sums = NULL;
+//    LAGr_Vector_new(&sums, GrB_INT32, size);
+//    // it doesn't work with transpose, I don't know why.
+//    LAGr_reduce(sums, GrB_NULL, GrB_NULL, GxB_PLUS_INT32_MONOID, matrix, desc);
+
+    // as reduce doesn't work I go straight
+    for (GrB_Index j = 0; j < size; j++) {
+        GrB_Index i;
+        for (i = 0; i < size; i++) {
+            int q = 0;
+            GrB_Matrix_extractElement(&q, matrix, i, j);
+            if (q != 0) {
+                break;
+            }
+        }
+        if (i == size) {
+            return j;
+        }
+    }
+
+    return 0;
+}
+
 
 int main (int argc, char **argv)
 {
@@ -85,11 +110,19 @@ int main (int argc, char **argv)
         // read in the file in Matrix Market format from stdin
         LAGRAPH_OK(LAGraph_mmread(&graph_matrix, stdin));
     }
-
-    LAGraph_dfs_traverse_bin_tree(&result, graph_matrix, 4, true);
-
     GrB_Index n;
     LAGr_Matrix_nrows(&n, graph_matrix);
+
+    int root = find_root(graph_matrix, n);
+    printf("Root: %d\n", root);
+
+    struct timespec tstart={0,0}, tend={0,0};
+    clock_gettime(CLOCK_MONOTONIC, &tstart);
+    LAGraph_dfs_traverse_bin_tree(&result, graph_matrix, root, false);
+    clock_gettime(CLOCK_MONOTONIC, &tend);
+    double time = to_microsec(tstart, tend);
+    printf("Time: %f microsec\n", time);
+
     int k;
     printf("Result: ");
     for (GrB_Index i = 0; i < n; i++) {
@@ -98,6 +131,8 @@ int main (int argc, char **argv)
     }
     printf("\n");
 
+    GrB_free(&graph_matrix);
+    GrB_free(&result);
     LAGRAPH_FREE_ALL;
     LAGRAPH_OK(GrB_finalize( ));
 }
