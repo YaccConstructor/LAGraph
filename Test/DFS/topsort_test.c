@@ -1,5 +1,5 @@
 //------------------------------------------------------------------------------
-// dfs_topsort_test: read in (or create) a matrix and test DFS-based topological sort
+// topsort_test: read a matrix and test DFS-based topological sort
 //------------------------------------------------------------------------------
 
 /*
@@ -42,51 +42,60 @@
 
 #define LAGRAPH_FREE_ALL    \
 {                           \
-    GrB_free (&result);     \
     GrB_free (&A);          \
+}
+
+GrB_Info run_test(GrB_Matrix A)
+{
+    int answer[5][5] = {
+            { 1, 0, 2, 4, 3 },
+            { 1, 0, 4, 2, 3 },
+            { 0, 1, 2, 4, 3 },
+            { 0, 1, 4, 2, 3 },
+            { 0, 2, 1, 4, 3 }
+    };
+
+    GrB_Index n;
+    LAGr_Matrix_nrows(&n, A);
+
+    GrB_Vector order = GrB_NULL;
+    LAGraph_dfs_topsort(&order, A, 0);
+
+    int isSuccess = 0;
+    for (int i = 0; i < 5; i++) {
+        int j = 0;
+        for (j = 0; j < n; j++) {
+            int k;
+            GrB_Vector_extractElement(&k, order, j);
+            if (k != answer[i][j]) break;
+        }
+        if (j == n) isSuccess = 1;
+    }
+
+    if (isSuccess) printf("Test passed\n");
+    else printf("Test failed\n");
 }
 
 int main(int argc, char **argv)
 {
     GrB_Info info;
 
-    GrB_Matrix A = NULL;
-    GrB_Vector result = NULL;
+    GrB_Matrix A = GrB_NULL;
     LAGRAPH_OK (LAGraph_init ( ));
 
-    if (argc > 1) {
-        char *filename = argv[1];
-        printf("matrix will be read from: %s\n", filename);
+    // load matrix from test file
+    char *filename = "test.mtx";
+    printf("Matrix will be read from: %s\n", filename);
 
-        FILE *f = fopen(filename, "r");
-        if (f == NULL) {
-            printf("Matrix file not found: [%s]\n", filename);
-            exit(1);
-        }
-        LAGRAPH_OK(LAGraph_mmread(&A, f));
-        fclose(f);
+    FILE *f = fopen(filename, "r");
+    if (f == NULL) {
+        printf("Matrix file not found: %s\n", filename);
+        exit(1);
     }
-    else
-    {
-        // Usage:  ./dfs_topsort_test < matrixfile.mtx
-        printf("matrix: from stdin\n");
+    LAGRAPH_OK(LAGraph_mmread(&A, f));
+    fclose(f);
 
-        // read in the file in Matrix Market format from stdin
-        LAGRAPH_OK(LAGraph_mmread(&A, stdin));
-    }
-
-    GrB_Index n;
-    LAGr_Matrix_nrows(&n, A);
-
-    LAGraph_dfs_topsort(&result, A, 3);
-
-    int k;
-    printf("Topologically sorted array of vertices:\n");
-    for (GrB_Index i = 0; i < n; i++) {
-        GrB_Vector_extractElement(&k, result, i);
-        printf("%d ", k + 1);
-    }
-    printf("\n");
+    run_test(A);
 
     LAGRAPH_FREE_ALL;
     LAGRAPH_OK(GrB_finalize( ));

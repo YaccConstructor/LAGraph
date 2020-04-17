@@ -50,7 +50,7 @@ cmake_policy ( SET CMP0042 NEW )
 cmake_policy ( SET CMP0048 NEW )
 endif ( )
 
-project ( dfs_topsort_test )
+project ( topsort_test )
 
 #-------------------------------------------------------------------------------
 # determine build type
@@ -208,7 +208,7 @@ message ( STATUS "CMAKE C flags: " ${CMAKE_C_FLAGS} )
 
 file ( GLOB SOURCES "*.c" )
 
-add_executable ( dfs_topsort_test ${SOURCES} )
+add_executable ( topsort_test ${SOURCES} )
 
 # Libraries required for Demo programs
-target_link_libraries ( dfs_topsort_test graphblas lagraph m )
+target_link_libraries ( topsort_test graphblas lagraph m )
