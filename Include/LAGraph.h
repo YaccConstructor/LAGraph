@@ -1230,4 +1230,12 @@ GrB_Info LAGraph_bfs_both       // push-pull BFS, or push-only if AT = NULL
     , FILE * logfile
 ) ;
 
+
+GrB_Info LAGraph_dfs_topsort   // Put comments here
+(
+    GrB_Vector *order_output,
+    GrB_Matrix A,
+    GrB_Index source
+);
+
 #endif

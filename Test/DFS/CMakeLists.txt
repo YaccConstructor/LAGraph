@@ -1,5 +1,5 @@
 #-------------------------------------------------------------------------------
-# LAGraph/Test/CC/CMakeLists.txt:  cmake script for LAGraph test
+# LAGraph/Test/DFS/CMakeLists.txt:  cmake script for LAGraph test
 #-------------------------------------------------------------------------------
 
 # LAGraph, (... list all authors here) (c) 2019, All Rights Reserved.
@@ -206,10 +206,9 @@ message ( STATUS "CMAKE C flags: " ${CMAKE_C_FLAGS} )
 # Demo programs
 #-------------------------------------------------------------------------------
 
-file ( GLOB SOURCES "*.c" )
-
-add_executable ( dfs_test ${SOURCES} )
+add_executable ( dfs_test dfs_test.c )
+add_executable ( topsort_test topsort_test.c )
 
 # Libraries required for Demo programs
 target_link_libraries ( dfs_test graphblas lagraph m )
-
+target_link_libraries ( topsort_test graphblas lagraph m )
