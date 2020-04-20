@@ -884,6 +884,14 @@ GrB_Info LAGraph_bfs_simple     // push-only BFS
     GrB_Index s             // starting node of the BFS
 ) ;
 
+GrB_Info LAGraph_dfs_traverse_bin_tree     // traversal of binary tree in pre-order DFS
+(
+    GrB_Vector *v_output,   // v(i) is the number of node in traverse order
+    const GrB_Matrix A,     // input graph, treated as if boolean in semiring
+    GrB_Index s,            // starting node of the DFS
+    bool is_post_order      // post-order or pre-order of traversal
+) ;
+
 GrB_Info LAGraph_cc_lacc (
     GrB_Vector *result,     // output: array of component identifiers
     GrB_Matrix A,           // input matrix

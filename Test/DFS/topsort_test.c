@@ -84,7 +84,7 @@ int main(int argc, char **argv)
     LAGRAPH_OK (LAGraph_init ( ));
 
     // load matrix from test file
-    char *filename = "test.mtx";
+    char *filename = "../topsort_test.mtx";
     printf("Matrix will be read from: %s\n", filename);
 
     FILE *f = fopen(filename, "r");
